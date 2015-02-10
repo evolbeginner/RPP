@@ -19,21 +19,22 @@ export PATH=$PATH:$mnt3_sswang/software/NGS/reads_map/bismark_package/bismark_v0
 ###################################################################
 function parse_sras(){
 	for i in ${sras[@]}; do
-		#$fastq_dump -O $SRA_examine_dir $i&
 		unset a
 		for j in `echo $(get_basename_corename $i)`; do
 			a=(${a[@]} $j)
 		done
 		basename=${a[0]}
 		corename=${a[1]}
-		#tmp_fastq=$SRA_examine_dir/$corename".fastq"
-		#proc_id=$!
-		#sleep 1
-		#kill -9 $proc_id
-		#check_paired_or_single $tmp_fastq
-		#paired_infos=(${paied_info[@]} $is_paired)
 		corenames=(${corenames[@]} $corename) 
 	done
+}
+
+
+function read_sra_list(){
+	local sra_list=$1
+	while read line; do
+		sras=(${sras[*]} $line)
+	done < $sra_list
 }
 
 
@@ -211,11 +212,20 @@ while [ $# -gt 0 ]; do
 			sras=(${sras[@]} $2)
 			shift
 			;;
+		--sra_id)
+			sra=(${sra[@]} $2)
+			shift
+			;;
 		--sra_dir)
 			sra_dir=$2
 			for i in $sra_dir/*.sra; do
 				sras=(${sras[@]} $i)
 			done
+			shift
+			;;
+		--sra_list)
+			sra_list=$2
+			read_sra_list $sra_list
 			shift
 			;;
 		--fastq)
