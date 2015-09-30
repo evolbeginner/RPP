@@ -1,14 +1,20 @@
 #! /bin/bash
 
+# RPP: RNA-seq processing pipeline
 # written by Sishuo Wang from The University of British Columbia
 # Please write e-mails to sishuowang@hotmail.ca if you have any question and/or suggestion. Your help is highly appreciated.
+
 ###################################################################
+# The following scripts or tools might be needed.
+# Please make sure that their paths are correct.
 
 mnt3_sswang="/mnt/bay3/sswang"
 fastq_dump="$mnt3_sswang/software/NGS/basic_processing/sratoolkit.2.4.2/bin/fastq-dump"
 cutadapt_ruby="$mnt3_sswang/tools_program/NGS_scripts/basic/cutadapt.rb"
 fastq_line3_del="$mnt3_sswang/tools_program/NGS_scripts/basic/fastq_line3_del.py"
 fastq_detect="$mnt3_sswang/software/NGS/basic_processing/mini_tools/fastq_detect.pl"
+fastqCombinePairedEnd="$mnt3_sswang/software/NGS/basic_processing/mini_tools/fastqCombinePairedEnd.py"
+#remove_unpaired_reads="$mnt3_sswang/software/NGS/basic_processing/mini_tools/remove_unpaired_fq.py"
 #check_paired_or_single="$mnt3_sswang/tools_program/NGS_scripts/basic/check_paired_or_single_end.pl"
 
 tophat2=tophat2
@@ -57,6 +63,17 @@ function run_cutadapt(){
 }
 
 
+function run_remove_unpaired_reads(){
+	local fq1 fq2
+	fq1=$1
+	fq2=$2
+	python $fastqCombinePairedEnd $fq1 $fq2
+	rm $fq1 $fq2
+	echo ${fq1}_pairs_R1.fastq ${fq2}_pairs_R2.fastq
+}
+
+
+
 function map(){
 	for index in ${!corenames[@]}; do
 		echo "dump-split sra ......"
@@ -69,13 +86,21 @@ function map(){
 		mkdir $outdir
 
 		$fastq_dump --split-3 -O $fastq_outdir $sra
+
+		if [ -f $HOME/ncbi/public/sra/$sra.sra* ]; then
+			rm $HOME/ncbi/public/sra/$sra.sra*
+		fi
+
 		if [ -e $fastq_outdir/${corename}.fastq ]; then
 			paired_info=0
 		else
 			paired_info=1
 		fi
 
+
 		if [ $paired_info == 1 ]; then
+			unset fastqs
+			unset cutadapt_fastqs
 			fastq1=$fastq_outdir/"${corename}_1.fastq"
 			fastq2=$fastq_outdir/"${corename}_2.fastq"
 			fastqs=($fastq1 $fastq2)
@@ -90,17 +115,23 @@ function map(){
 
 			fastq1=${cutadapt_fastqs[0]}
 			fastq2=${cutadapt_fastqs[1]}
+			unset paired_fastq
+			for i in $(run_remove_unpaired_reads $fastq1 $fastq2); do
+				paired_fastq=(${paired_fastq[@]} $i)
+			done
+			paired_fastq1=${paired_fastq[0]}
+			paired_fastq2=${paired_fastq[1]}
 			case $mapper in
 				tophat2)
-					$tophat2 -p $cpu -o $outdir $genome_index $fastq1 $fastq2
+					$tophat2 -p $cpu -o $outdir $genome_index $paired_fastq1 $paired_fastq2
 					;;
 				bowtie2)
-					$bowtie2 -p $cpu -x $genome_index -1 $fastq1 -2 $fastq2 > $outdir/$corename.sam
+					$bowtie2 -p $cpu -x $genome_index -1 $paired_fastq1 -2 $paired_fastq2 > $outdir/$corename.sam
 					;;
 				bismark)
 					prepare_4_bismark_params
-					bismark $non_directional_param --bowtie2 $phred64_param -o $outdir $bismark_genome_indir -1 $fastq1 -2 $fastq2
-					fastq_basename=`basename $fastq1`
+					bismark $non_directional_param --bowtie2 $phred64_param -o $outdir $bismark_genome_indir -1 $paired_fastq1 -2 $paired_fastq2
+					fastq_basename=`basename $paired_fastq1`
 					cd $outdir
 					ls
 					bismark_methylation_extractor -s --comprehensive ${fastq_basename}_bismark_bt2_pe.sam
@@ -138,6 +169,7 @@ function map(){
 		fi
 	done
 }
+
 
 
 function is_fastq_quality_phred64(){
@@ -196,13 +228,25 @@ function show_help(){
 	echo "bash $basename [Options]"
 	cat <<EOF
 Mandantory arguments:
---sra or
---fastq
+--sra|--sra_list|--fastq|--sra_dir
 --outdir
 Optional arguments:
+--mapper
+--cutadapt
+--cutadapt_args
+--genome
+--genome_index
+ --genome_indir|genome_indir_4_bismark
+--bismark_genome_dir
+--strand_specific
+--cpu
+--no_map
+--force|--clear
+
 EOF
 	exit
 }
+
 
 
 ###################################################################
@@ -270,6 +314,9 @@ while [ $# -gt 0 ]; do
 		--strand_specific)
 			is_strand_specific=1
 			;;
+		--no_map)
+			is_no_map=1
+			;;
 		--clear|--force)
 			force=1
 			;;
@@ -282,6 +329,9 @@ while [ $# -gt 0 ]; do
 done
 
 
+################################################################################
+[ -z $cpu ] && cpu=1
+
 if [ -z $outdir ]; then
 	show_help "Error! outdir should be specified with '--outdir'"
 fi
@@ -289,17 +339,17 @@ fi
 if [ -d $outdir ]; then
 	if [ $force ]; then
 		rm -rf $outdir
-	else
-		show_help "outdir $outdir has already existed!"
 	fi
 fi
 
 
+################################################################################
 fastq_outdir=$outdir/"fastq"
 mapping_outdir=$outdir/"mapping"
 cutadapt_outdir=$outdir/"cutadapt"
 bowtie2_genome_index_indir=$outdir/"bowtie2_genome_index"
 mkdir -p $outdir
+
 mkdir -p $fastq_outdir
 mkdir -p $mapping_outdir
 [ ! -z $is_cutadapt ] && mkdir -p $cutadapt_outdir
@@ -309,6 +359,10 @@ if [ $mapper == "bowtie2" -o $mapper == "tophat2" ]; then
 	if [ -z $genome_index ]; then
 		if [ ! -z $genome ]; then
 			mkdir -p $bowtie2_genome_index_indir
+			cd `dirname $genome`
+			full_path_genome=`pwd`/`basename $genome`
+			cd -
+			ln -s $full_path_genome $bowtie2_genome_index_indir/
 			genome_basename=$bowtie2_genome_index_indir/`basename $genome`
 			genome_basename=${genome_basename%.*}
 			bowtie2-build $genome $genome_basename
@@ -331,12 +385,9 @@ if [ $mapper == "bismark" ]; then
 fi
 
 
-[ -z $cpu ] && cpu=1
-
-
 ###################################################################
 parse_sras
 
-map
+if [ -z $is_no_map ]; then map; fi
 
 
