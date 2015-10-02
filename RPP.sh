@@ -22,6 +22,7 @@ bowtie2=bowtie2
 export PATH=$PATH:$mnt3_sswang/software/NGS/reads_map/bismark_package/bismark_v0.8.3/
 
 
+
 ###################################################################
 function parse_sras(){
 	for i in ${sras[@]}; do
@@ -79,14 +80,23 @@ function map(){
 		echo "dump-split sra ......"
 		corename=${corenames[$index]}
 		sra=${sras[$index]}
-		paired_info=${paired_infos[$index]}
 		echo $corename
+
+		if [ ! -z $is_no_download ]; then
+			echo "";
+		else
+			first_3=`grep -o '^...' <<< $corename`
+			first_6=`grep -o '^......' <<< $corename`
+			full=${corename}.sra
+			wget ftp://ftp-trace.ncbi.nih.gov/sra/sra-instant/reads/ByRun/sra/$first_3/$first_6/$corename/$full
+		fi
 
 		outdir=$mapping_outdir/$corename
 		mkdir $outdir
 
-		$fastq_dump --split-3 -O $fastq_outdir $sra
+		$fastq_dump --split-3 -O $fastq_outdir $sra.sra
 
+		[ -f $sra.sra* ] && rm $sra.sra*
 		if [ -f $HOME/ncbi/public/sra/$sra.sra* ]; then
 			rm $HOME/ncbi/public/sra/$sra.sra*
 		fi
@@ -119,6 +129,11 @@ function map(){
 			for i in $(run_remove_unpaired_reads $fastq1 $fastq2); do
 				paired_fastq=(${paired_fastq[@]} $i)
 			done
+
+			if [ -z $is_map ]; then
+				continue
+			fi
+	
 			paired_fastq1=${paired_fastq[0]}
 			paired_fastq2=${paired_fastq[1]}
 			case $mapper in
@@ -150,6 +165,11 @@ function map(){
 					fastq=$i
 				done
 			fi
+
+			if [ -z $is_map]; then
+				continue
+			fi
+
 			case $mapper in
 				tophat2)
 					$tophat2 -p $cpu -o $outdir $genome_index $fastq
@@ -329,6 +349,7 @@ while [ $# -gt 0 ]; do
 done
 
 
+
 ################################################################################
 [ -z $cpu ] && cpu=1
 
@@ -341,6 +362,9 @@ if [ -d $outdir ]; then
 		rm -rf $outdir
 	fi
 fi
+
+if [ -z $is_no_map ]; then is_map=1; fi
+
 
 
 ################################################################################
@@ -358,17 +382,19 @@ mkdir -p $mapping_outdir
 if [ $mapper == "bowtie2" -o $mapper == "tophat2" ]; then
 	if [ -z $genome_index ]; then
 		if [ ! -z $genome ]; then
-			mkdir -p $bowtie2_genome_index_indir
-			cd `dirname $genome`
-			full_path_genome=`pwd`/`basename $genome`
-			cd -
-			ln -s $full_path_genome $bowtie2_genome_index_indir/
-			genome_basename=$bowtie2_genome_index_indir/`basename $genome`
-			genome_basename=${genome_basename%.*}
-			bowtie2-build $genome $genome_basename
-			genome_index=$genome_basename
-		else
-			show_help "Error! Genome has to be given if genome_index is not given!"		
+			if [ ! -z $is_map ]; then
+				mkdir -p $bowtie2_genome_index_indir
+				cd `dirname $genome`
+				full_path_genome=`pwd`/`basename $genome`
+				cd -
+				ln -s $full_path_genome $bowtie2_genome_index_indir/
+				genome_basename=$bowtie2_genome_index_indir/`basename $genome`
+				genome_basename=${genome_basename%.*}
+				bowtie2-build $genome $genome_basename
+				genome_index=$genome_basename
+			fi
+		#else
+		#	show_help "Error! Genome has to be given if genome_index is not given!"		
 		fi
 	fi
 fi
@@ -385,9 +411,18 @@ if [ $mapper == "bismark" ]; then
 fi
 
 
+for i in ${!sras[@]}; do
+	a=${sras[$i]}
+	if grep "sra$" <<< $a >/dev/null; then
+		is_no_download=1
+		sras[$i]=${a%%.sra}
+	fi
+done
+
+
 ###################################################################
 parse_sras
 
-if [ -z $is_no_map ]; then map; fi
+map
 
 
