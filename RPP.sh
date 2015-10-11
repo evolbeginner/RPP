@@ -22,6 +22,8 @@ bowtie2=bowtie2
 export PATH=$PATH:$mnt3_sswang/software/NGS/reads_map/bismark_package/bismark_v0.8.3/
 
 
+is_line3_del=1
+
 
 ###################################################################
 function parse_sras(){
@@ -59,6 +61,7 @@ function run_cutadapt(){
 		output=$cutadapt_outdir/$output_basename
 		ruby $cutadapt_ruby -i $fastq --args $cutadapt_ruby_args -o $output --force
 		cutadapt_fastqs=(${cutadapt_fastqs} $output)
+		[ ! -z $is_rm_fq ] && rm $fastq
 	done
 	echo ${cutadapt_fastqs[*]}
 }
@@ -72,6 +75,7 @@ function run_remove_unpaired_reads(){
 	rm $fq1 $fq2
 	echo ${fq1}_pairs_R1.fastq ${fq2}_pairs_R2.fastq
 }
+
 
 
 
@@ -115,7 +119,8 @@ function map(){
 			fastq2=$fastq_outdir/"${corename}_2.fastq"
 			fastqs=($fastq1 $fastq2)
 			is_fastq_quality_phred64 $fastq1
-			run_fastq_line3_del
+			[ ! -z $is_line3_del ] && run_fastq_line3_del
+
 			# run cutadapt
 			if [ ! -z $is_cutadapt ]; then
 				for i in $(run_cutadapt ${fastqs[@]}); do
@@ -154,11 +159,13 @@ function map(){
 					;;
 			esac
 
+
 		else
 			fastq=$fastq_outdir/"$corename.fastq"
 			fastqs=($fastq)
 			is_fastq_quality_phred64 $fastq
-			run_fastq_line3_del
+			[ ! -z $is_line3_del ] && run_fastq_line3_del
+
 			# run cutadapt
 			if [ ! -z $is_cutadapt ]; then
 				for i in $(run_cutadapt $fastq); do
@@ -189,6 +196,7 @@ function map(){
 		fi
 	done
 }
+
 
 
 
@@ -260,6 +268,7 @@ Optional arguments:
 --bismark_genome_dir
 --strand_specific
 --cpu
+--no_line3_del
 --no_map
 --force|--clear
 
@@ -333,6 +342,12 @@ while [ $# -gt 0 ]; do
 			;;			
 		--strand_specific)
 			is_strand_specific=1
+			;;
+		--no_line3_del)
+			is_line3_del=""
+			;;
+		--rm_fq|--rf_fastq)
+			is_rm_fq=1
 			;;
 		--no_map)
 			is_no_map=1
