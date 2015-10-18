@@ -17,8 +17,11 @@ fastqCombinePairedEnd="$mnt3_sswang/software/NGS/basic_processing/mini_tools/fas
 #remove_unpaired_reads="$mnt3_sswang/software/NGS/basic_processing/mini_tools/remove_unpaired_fq.py"
 #check_paired_or_single="$mnt3_sswang/tools_program/NGS_scripts/basic/check_paired_or_single_end.pl"
 
+
 tophat2=tophat2
 bowtie2=bowtie2
+STAR=$mnt3_sswang/software/NGS/STAR-STAR_2.4.2a/STAR 
+
 export PATH=$PATH:$mnt3_sswang/software/NGS/reads_map/bismark_package/bismark_v0.8.3/
 
 
@@ -81,36 +84,39 @@ function run_remove_unpaired_reads(){
 
 function map(){
 	for index in ${!corenames[@]}; do
-		echo "dump-split sra ......"
-		corename=${corenames[$index]}
-		sra=${sras[$index]}
-		echo $corename
+		if [ -z $fastqs ]; then
+			echo "dump-split sra ......"
+			corename=${corenames[$index]}
+			sra=${sras[$index]}
+			echo $corename
 
-		if [ ! -z $is_no_download ]; then
-			echo "";
-		else
-			first_3=`grep -o '^...' <<< $corename`
-			first_6=`grep -o '^......' <<< $corename`
-			full=${corename}.sra
-			wget ftp://ftp-trace.ncbi.nih.gov/sra/sra-instant/reads/ByRun/sra/$first_3/$first_6/$corename/$full
+			if [ ! -z $is_no_download ]; then
+				echo "";
+			else
+				first_3=`grep -o '^...' <<< $corename`
+				first_6=`grep -o '^......' <<< $corename`
+				full=${corename}.sra
+				wget -q ftp://ftp-trace.ncbi.nih.gov/sra/sra-instant/reads/ByRun/sra/$first_3/$first_6/$corename/$full
+			fi
+
+			$fastq_dump --split-3 -O $fastq_outdir $sra.sra
+
+			[ -f $sra.sra* ] && rm $sra.sra*
+			if [ -f $HOME/ncbi/public/sra/$sra.sra* ]; then
+				rm $HOME/ncbi/public/sra/$sra.sra*
+			fi
 		fi
+
 
 		outdir=$mapping_outdir/$corename
 		mkdir $outdir
 
-		$fastq_dump --split-3 -O $fastq_outdir $sra.sra
-
-		[ -f $sra.sra* ] && rm $sra.sra*
-		if [ -f $HOME/ncbi/public/sra/$sra.sra* ]; then
-			rm $HOME/ncbi/public/sra/$sra.sra*
-		fi
 
 		if [ -e $fastq_outdir/${corename}.fastq ]; then
 			paired_info=0
 		else
 			paired_info=1
 		fi
-
 
 		if [ $paired_info == 1 ]; then
 			unset fastqs
@@ -130,7 +136,7 @@ function map(){
 
 			fastq1=${cutadapt_fastqs[0]}
 			fastq2=${cutadapt_fastqs[1]}
-			unset paired_fastq
+			unset paired_fastq fastqs
 			for i in $(run_remove_unpaired_reads $fastq1 $fastq2); do
 				paired_fastq=(${paired_fastq[@]} $i)
 			done
@@ -154,15 +160,22 @@ function map(){
 					fastq_basename=`basename $paired_fastq1`
 					cd $outdir
 					ls
-					bismark_methylation_extractor -s --comprehensive ${fastq_basename}_bismark_bt2_pe.sam
+					bismark_methylation_extractor -p --comprehensive ${fastq_basename}_bismark_bt2_pe.sam
 					cd -
+					;;
+				STAR)
+					$STAR --genomeDir $STAR_index \
+					--readFilesIn $paired_fastq1 $paired_fastq2 \
+					--outFileNamePrefix $outdir/$corename --runThreadN $cpu \
+					--outSAMtype BAM SortedByCoordinate --alignIntronMax 25000 \
+					--outSAMstrandField intronMotif --limitBAMsortRAM 23439993657
 					;;
 			esac
 
 
 		else
 			fastq=$fastq_outdir/"$corename.fastq"
-			fastqs=($fastq)
+			unset fastqs
 			is_fastq_quality_phred64 $fastq
 			[ ! -z $is_line3_del ] && run_fastq_line3_del
 
@@ -173,7 +186,7 @@ function map(){
 				done
 			fi
 
-			if [ -z $is_map]; then
+			if [ -z $is_map ]; then
 				continue
 			fi
 
@@ -191,6 +204,12 @@ function map(){
 					cd $outdir
 					bismark_methylation_extractor -s --comprehensive ${fastq_basename}_bismark_bt2.sam
 					cd -
+					;;
+				STAR)
+					$STAR --genomeDir $STAR_index --readFilesIn $fastq \
+					--outFileNamePrefix $outdir/$corename --runThreadN $cpu \
+					--outSAMtype BAM SortedByCoordinate --alignIntronMax 25000 \
+					--outSAMstrandField intronMotif --limitBAMsortRAM 23439993657
 					;;
 			esac
 		fi
@@ -214,6 +233,7 @@ function is_fastq_quality_phred64(){
 }
 
 
+
 function check_paired_or_single(){
 	perl $check_paired_or_single $1
 	if [ `perl $check_paired_or_single $1` -eq 1 ]; then
@@ -228,6 +248,14 @@ function check_paired_or_single(){
 function get_basename_corename(){
 	basename=`basename $1`
 	corename=${basename%%.sra}
+	echo $basename $corename
+}
+
+
+function get_basename_corename_fastq(){
+	basename=`basename $1`
+	corename=${basename%%.fastq}
+	corename=${corename%%_?}
 	echo $basename $corename
 }
 
@@ -264,7 +292,7 @@ Optional arguments:
 --cutadapt_args
 --genome
 --genome_index
- --genome_indir|genome_indir_4_bismark
+--genome_indir|genome_indir_4_bismark
 --bismark_genome_dir
 --strand_specific
 --cpu
@@ -336,6 +364,10 @@ while [ $# -gt 0 ]; do
 			genome_indir_4_bismark=$2
 			shift
 			;;
+		--STAR_index)
+			STAR_index=$2
+			shift
+			;;
 		--bismark_genome_indir)
 			bismark_genome_indir=$2
 			shift
@@ -393,6 +425,30 @@ mkdir -p $fastq_outdir
 mkdir -p $mapping_outdir
 [ ! -z $is_cutadapt ] && mkdir -p $cutadapt_outdir
 
+[ $mapper=="STAR" -a -z $STAR_index ] && echo -e "STAR index must be given if STAR is chosen as the mapper! Exiting ......\n" && exit
+
+
+if [ ! -z $fastqs ]; then
+	i=${fastqs[0]}
+	for j in `echo $(get_basename_corename_fastq $i)`; do
+		a=(${a[@]} $j)
+	done
+	basename=${a[0]}
+	corename=${a[1]}
+	corenames=(${corenames[@]} $corename) 
+fi
+
+for i in ${fastqs[@]}; do
+	dirname=`dirname $i`
+	cd $dirname >/dev/null
+	dir=$PWD
+	cd - >/dev/null
+	ln -s $dir/`basename $i` $fastq_outdir
+done
+
+
+#echo ${corenames[@]}
+
 
 if [ $mapper == "bowtie2" -o $mapper == "tophat2" ]; then
 	if [ -z $genome_index ]; then
@@ -413,6 +469,7 @@ if [ $mapper == "bowtie2" -o $mapper == "tophat2" ]; then
 		fi
 	fi
 fi
+
 
 if [ $mapper == "bismark" ]; then
 	if [ -z $bismark_genome_indir ]; then
@@ -439,5 +496,6 @@ done
 parse_sras
 
 map
+
 
 
